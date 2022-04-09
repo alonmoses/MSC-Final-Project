@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  st:
+    image: fpst:latest
+    build: .
+    volumes:
+      - "./data:/FPST/data"
+      - "./notebooks:/FPST/notebooks"
+    ports:
+      - "8888:8888"
+    command: jupyter notebook --no-browser --ip='*' --port=8888 --allow-root --NotebookApp.token='' --NotebookApp.password=''
