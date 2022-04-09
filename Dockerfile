@@ -1,5 +1,5 @@
 # Create the image base on the Miniconda3 image
-FROM python:3.8
+FROM python:3.8-slim
 
 RUN apt-get update
 RUN apt-get install ffmpeg libsm6 libxext6 -y
@@ -13,5 +13,5 @@ COPY . /FPST/.
 RUN /usr/local/bin/python -m pip install --upgrade pip && \
   pip3 install --no-cache-dir -r requirements.txt
 
-ENV PYTHONPATH=/FPST
+ENV PYTHONPATH=/FPST/src
 ENV PYTHONUNBUFFERED=1
