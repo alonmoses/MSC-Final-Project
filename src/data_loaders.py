@@ -8,15 +8,15 @@ import pandas as pd
 
 class ScanpyLoader:
     def __init__(self) -> None:
-        self.data = None
+        pass
 
     def load_visium_dataset(self, sample_id='V1_Human_Lymph_Node'):
         # Visium - Processed Visium Spatial Gene Expression data from 10x Genomics.
-        self.data = sc.datasets.visium_sge(sample_id=sample_id)
+        return sc.datasets.visium_sge(sample_id=sample_id)
 
     def load_local_visum(self, path_='', count_file='filtered_feature_bc_matrix.h5'):
         # 10x-Genomics-formatted visum dataset
-        self.data = sc.read_visium(path=path_, genome=None, count_file=count_file, library_id=None, load_images=True, source_image_path=None)
+        return sc.read_visium(path=path_, genome=None, count_file=count_file, library_id=None, load_images=True, source_image_path=None)
         
     def generate_sample_data(self):
         # Generate sample data
@@ -31,26 +31,26 @@ class ScanpyLoader:
         uns = None
 
         # Create the AnnData object
-        self.data = sc.AnnData(X, obs=obs, var=var, uns=uns, dtype='int32')
+        return sc.AnnData(X, obs=obs, var=var, uns=uns, dtype='int32')
 
 
 class StlearnLoader:
     def __init__(self) -> None:
-        self.data = None
+        pass
 
     def load_from_scanpy_object(self):
         scanpy_loader = ScanpyLoader()
         sc_data = scanpy_loader.load_visium_dataset()
-        self.data = st.convert_scanpy(sc_data)
+        return st.convert_scanpy(sc_data)
 
     def load_from_st_datasets(self):
         # Visium - Processed Visium Spatial Gene Expression data from 10x Genomics.
-        self.data = st.datasets.example_bcba()
+        return st.datasets.example_bcba()
 
     def load_local_visum(self, path_='data\\\V1_Human_Lymph_Node\\', count_file='filtered_feature_bc_matrix.h5'):
         # In addition to reading regular 10x output, this looks for the spatial folder and loads images, 
         # coordinates and scale factors.
-        self.data = st.Read10X(path_, count_file=count_file, load_images=True)
+        return st.Read10X(path_, count_file=count_file, load_images=True)
         
     def generate_sample_data(self):
         # Generate sample data
@@ -67,4 +67,4 @@ class StlearnLoader:
         df_spatial = pd.DataFrame({'imagecol': np.random.randn(n_obs),
                                 'imagerow': np.random.randn(n_obs)})
 
-        self.data = st.create_stlearn(count=df_count, spatial=df_spatial, library_id="Sample_test")
+        return st.create_stlearn(count=df_count, spatial=df_spatial, library_id="Sample_test")
