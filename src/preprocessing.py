@@ -1,7 +1,7 @@
 import stlearn as st
 
 
-def filtering(data, min_counts, max_counts, min_cells, max_cells):
+def filtering(data, min_counts=None, max_counts=None, min_cells=None, max_cells=None):
     # Filter genes - Keep genes that have (Choose only 1):
     # - at least min_counts counts or 
     # - are expressed in at least min_cells cells or 

@@ -1,19 +1,30 @@
-from os import path
-
-import numpy as np
+import stlearn as st
+import scanpy as sc
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from torch import tensor
 from torch.utils.data import DataLoader, Dataset
 
+from src import preprocessing
 ### ----------------------------------------------------------------------- Get Data -------------------------------------------------------------------------------- ###
 
+def load_anndata_object(dataset_name):
+    # Visium - Processed Visium Spatial Gene Expression data from 10x Genomics.
+    sc_anndata_obj = sc.datasets.visium_sge(sample_id=dataset_name)
+    st_anndata_obj = st.convert_scanpy(sc_anndata_obj)
+    return st_anndata_obj
 
-def get_expressions():
-    """
-    """
+def run_preprocessing(data_obj):
+    data = preprocessing.filtering(data=data_obj, min_counts=100, min_cells=1000)
+
+def get_expressions(dataset_name='V1_Human_Lymph_Node'):
     # Load the expressions data into a Pandas DataFrame
-    df_expressions = None
+    st_anndata_obj = load_anndata_object(dataset_name=dataset_name)
+    spots = st_anndata_obj.obs.index.values
+    genes = st_anndata_obj.var.index.values
+    df_expressions_matrix = pd.DataFrame.sparse.from_spmatrix(st_anndata_obj.X, columns=genes, index=spots)
+    df_expressions = df_expressions_matrix.stack().reset_index()
+    df_expressions.columns = ['spot', 'gene', 'expressions']
 
     print(f'Data shape: {df_expressions.shape}')
     print(f'Number of genes: {df_expressions["gene"].nunique()}')
@@ -21,7 +32,6 @@ def get_expressions():
     return df_expressions
 
 ### ----------------------------------------------------------------------- Split Data -------------------------------------------------------------------------------- ###
-
 
 def train_valid_test_split(df):
     """
