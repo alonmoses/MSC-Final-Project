@@ -20,7 +20,7 @@ def filtering(data, min_counts=None, max_counts=None, min_cells=None, max_cells=
         # By maximum cells
         st.pp.filter_genes(data, max_cells=max_cells, inplace=True)
         
-    print(f'New shape after filtering: {data.shape}')
+    print(f'New shape after filtering: {data.X.shape}')
     return data
 
 def log_transform(data):

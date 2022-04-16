@@ -6,7 +6,7 @@ from ignite.engine import Engine, Events
 from ignite.handlers import EarlyStopping, ModelCheckpoint
 from ignite.metrics import Loss
 
-from src.loss import *
+from loss import *
 
 # We used the Ignite package for smarter building of our trainers.
 # This package provide built-in loggers and handlers for different actions.
@@ -141,25 +141,22 @@ def trainer(model, optimizer, max_epochs, early_stopping, dl_train, dl_test, dev
 
 # Only for testing
 if __name__ == '__main__':
-    from src.data import *
-    from src.hyperparams_tuning import *
+    import torch.optim as optim
+    from data import get_data
+    from models import get_model
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # dataset_name = 'books'  # 'movielens'
-
+    dataset_name = 'V1_Human_Lymph_Node'
     max_epochs = 2
     model_name = 'NMF'
-    mrr_threshold = 8
     best_params = {
         'learning_rate': 0.001,
         'optimizer': "RMSprop",
         'latent_dim': 20,
         'batch_size': 512
     }
-    dl_train, _, dl_test, _ = dataloaders(
-        dataset_name=dataset_name, device=device, batch_size=best_params['batch_size'])
+
+    dl_train, _, dl_test, _ = get_data(dataset_name=dataset_name, batch_size=best_params['batch_size'], device=device)  # Get data
     model = get_model(model_name, best_params, dl_train)  # Build model
-    optimizer = getattr(optim, best_params['optimizer'])(
-        model.parameters(), lr=best_params['learning_rate'])  # Instantiate optimizer
-    test_loss = trainer(model_name, model, optimizer, max_epochs, dl_train,
-                      dl_test, device, dataset_name, model_name=model_name)
+    optimizer = getattr(optim, best_params['optimizer'])(model.parameters(), lr=best_params['learning_rate'])  # Instantiate optimizer
+    test_loss = trainer(model_name, model, optimizer, max_epochs, dl_train, dl_test, device, dataset_name, model_name=model_name)
