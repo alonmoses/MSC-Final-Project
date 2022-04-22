@@ -25,3 +25,4 @@ dependencies:
     - torchviz
     - scanpy==1.8.2
     - umap-learn==0.5.2
+    - stlearn == 0.4.6
