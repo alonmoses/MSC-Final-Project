@@ -1,3 +1,10 @@
+# Specific for the project
+.devcontainer
+.idea
+data/
+notebooks/checkpoints/
+notebooks/tb-logger/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -127,3 +134,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+.idea/*
