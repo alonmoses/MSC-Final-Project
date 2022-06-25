@@ -109,6 +109,7 @@ def get_data(dataset_name, batch_size, device):
     """
     Get the train, validation, test, and full train data loaders for the relevant dataset
     """
+    print(preprocessing.__version__)
     dl_train, dl_valid, dl_test, dl_full_train = dataloaders(dataset_name=dataset_name, batch_size=batch_size, device=device)
     return dl_train, dl_valid, dl_test, dl_full_train
 
@@ -116,4 +117,5 @@ def get_data(dataset_name, batch_size, device):
 # For testing only
 if __name__ == '__main__':
     dataset_name = 'V1_Human_Lymph_Node'
+    print(preprocessing.__version__)
     dl_train, dl_valid, dl_test, dl_full_train = get_data(dataset_name=dataset_name, batch_size=128, device='cpu')
