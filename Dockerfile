@@ -1,5 +1,5 @@
 # Create the image base on the Miniconda3 image
-FROM python:3.8-slim
+FROM python:3.9-slim
 
 RUN apt-get update
 RUN apt-get install ffmpeg libsm6 libxext6 -y

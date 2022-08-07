@@ -27,6 +27,7 @@ class NMF(nn.Module):
 
         # Calculate the expression for the gene-spot combination
         output = (gene_embedding * spot_embedding).sum(1)
+        
         return output
 
 
@@ -72,28 +73,23 @@ class NNMF(nn.Module):
                                                                 self.embedding_genes.weight.shape).to(device))
         self.embedding_spots.weight = nn.Parameter(torch.normal(0, .1,
                                                                 self.embedding_spots.weight.shape).to(device))
-        # out_size = params['layers_sizes'][0][0]
 
-#         self.linear_layers = nn.ModuleList().to(device)
-
-#         for (in_size, out_size) in features_sizes:
-#             self.linear_layers.append(nn.Linear(in_size, out_size).to(device))
-
-        self.out_layer = nn.Linear(latent_dim, 1).to(device)
-        self.relu = nn.ReLU().to(device)
-    
+        linear_layers = []
+        for layer in params['layers_sizes']:
+            linear_layers.append(nn.Linear(layer[0], layer[1]))
+            linear_layers.append(nn.ReLU(inplace=True))
+        linear_layers.append(nn.Linear(layer[1], 1).to(device))
+        
+        self.linear_layers = nn.Sequential(*linear_layers)
+        
     def forward(self, gene_indices, spot_indices):
         
         gene_embedding = self.embedding_genes(gene_indices).to(torch.float)
         spot_embedding = self.embedding_spots(spot_indices).to(torch.float)
 
         x = torch.mul(gene_embedding, spot_embedding)
-        # x = torch.cat([gene_embedding, spot_embedding], 1)
-
-        # for idx, _ in enumerate(self.linear_layers):
-        #     x = self.linear_layers[idx](x)
             
-        output = self.out_layer(x)
+        output = self.linear_layers(x)
 
         return output
 

@@ -1,6 +1,7 @@
 import scanpy as sc
 import stlearn as st
 import pandas as pd
+import numpy as np
 
 from dataclasses import dataclass, field
 from typing import Tuple
@@ -21,7 +22,7 @@ class ExpressionDataset(Dataset):
         self.num_samples = len(df)
         self.genes = torch.tensor(df['gene'].values).to(device)
         self.spots = torch.tensor(df['spot'].values).to(device)
-        self.labels = torch.tensor(df['expression'].sparse.to_dense().values)
+        self.labels = torch.tensor(df['expression'].values)
         self.num_genes = df['gene'].max()
         self.num_spots = df['spot'].max()
 
@@ -45,54 +46,49 @@ class Data:
     num_workers: int = 1
     device: str = field(default = 'cpu')
 
-    def set_dataloaders(self):
+    def set_dataloaders(self, x, data, top_expressed_genes_number=100):
 
-        # Load the expressions into dataframe
-        expressions = self._get_expressions(dataset_name=self.dataset)
+        x = np.log(x+1)
         
-        # Split the data to train, val, test
-        self._split_dataset(df=expressions)
-
-        # Ceating Datasets
-        ds_train = ExpressionDataset(df=self.df_train, device=self.device)
-        ds_val = ExpressionDataset(df=self.df_val, device=self.device)
-        ds_test = ExpressionDataset(df=self.df_test, device=self.device)
-        dl_train_val = ExpressionDataset(df=self.df_train_val, device=self.device)
-
-        # Creating DataLoaders
-        self.dl_train = DataLoader(dataset=ds_train, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
-        self.dl_val = DataLoader(dataset=ds_val, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
-        self.dl_test = DataLoader(dataset=ds_test, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
-        self.dl_train_val = DataLoader(dataset=dl_train_val, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
-
-    def _get_expressions(self, dataset_name: str ='V1_Human_Lymph_Node') -> pd.DataFrame:
+        spots_values = data.obs.index.values
+        genes_values = data.var.index.values
+        df_expressions_matrix = pd.DataFrame(x, columns=genes_values, index=spots_values)
+        df_expressions = df_expressions_matrix.stack().reset_index()
+        df_expressions.columns = ['spot', 'gene', 'expression']
         
-        # Load dataset as stlearn AnnData object
-        print(dataset_name)
-        scanpy_anndata = sc.datasets.visium_sge(sample_id=dataset_name)
-        self.stlearn_anndata = st.convert_scanpy(scanpy_anndata)
-
-        # # Filter the data by min_counts and min_cells
-        # _min_counts = 15000
-        # _min_cells = 1000
-        # st.pp.filter_genes(adata=stlearn_anndata, min_counts=_min_counts)
-        # st.pp.filter_genes(adata=stlearn_anndata, min_cells=_min_cells)
-
-        spots = self.stlearn_anndata.obs.index.values
-        genes = self.stlearn_anndata.var.index.values
-        expressions_matrix = pd.DataFrame.sparse.from_spmatrix(self.stlearn_anndata.X, columns=genes, index=spots)
-
-        expressions = expressions_matrix.stack().reset_index()
-        expressions.columns = ['spot', 'gene', 'expression']
-
         # Ordinal encoding the genes and spots for supported type
-        oe = OrdinalEncoder()
-        expressions[['spot', 'gene']] = oe.fit_transform(expressions[['spot', 'gene']].values)
-        expressions[['spot', 'gene']] = expressions[['spot', 'gene']].astype(int)
+        self.oe_genes = OrdinalEncoder()
+        df_expressions[['gene']] = self.oe_genes.fit_transform(df_expressions[['gene']].values)
+        self.oe_spots = OrdinalEncoder()
+        df_expressions[['spot']] = self.oe_spots.fit_transform(df_expressions[['spot']].values)
+        df_expressions[['spot', 'gene']] = df_expressions[['spot', 'gene']].astype(int)
+        print(df_expressions.head())
+        # Creating DataLoaders - all genes 
+        self.dl_train, self.dl_val, self.dl_test = self.prepare_dl(df_expressions, split_ratio = 0.1)
+        
+        genes_expressed = np.sum(x, axis=0) / (np.count_nonzero(x, axis=0) + 1)
+        top_genes_indices = genes_expressed.argsort()[-top_expressed_genes_number:][::-1]
+        self.top_genes_names = data.var.index[top_genes_indices]
+        top_genes_codes = self.oe_genes.transform(X=pd.DataFrame(np.array(self.top_genes_names)).values)[:, 0]
+        mask = df_expressions['gene'].isin(top_genes_codes)
+        df_expressions_top_genes = df_expressions.loc[mask]
 
-        return expressions    
+        # Creating DataLoaders- top N expressed genes
+        self.dl_train_top_genes, self.dl_valid_top_genes, self.dl_test_top_genes = self.prepare_dl(df_expressions_top_genes, split_ratio = 0.1)
+    
+    def prepare_dl(self, expression_df, split_ratio = 0.1):
+        # split data to train, validaion and test sets
+        df_train, df_test = train_test_split(expression_df, test_size=split_ratio)
+        df_train, df_valid = train_test_split(df_train, test_size=split_ratio)
+        
+        # Ceating Datasets- top N expressed genes
+        ds_train = ExpressionDataset(df=df_train, device=self.device)
+        ds_valid = ExpressionDataset(df=df_valid, device=self.device)
+        ds_test = ExpressionDataset(df=df_test, device=self.device)        
 
-    def _split_dataset(self, df: pd.DataFrame, test_size: float = 0.1, val_size: float = 0.1):
-        self.df_train_val, self.df_test = train_test_split(df, test_size=test_size)
-        self.df_train, self.df_val = train_test_split(self.df_train_val, test_size=val_size)    
-
+        # Creating DataLoaders- top N expressed genes
+        dl_train = DataLoader(dataset=ds_train, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
+        dl_valid = DataLoader(dataset=ds_valid, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
+        dl_test = DataLoader(dataset=ds_test, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
+        
+        return dl_train, dl_valid, dl_test
