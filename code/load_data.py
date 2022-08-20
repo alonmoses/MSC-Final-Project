@@ -2,6 +2,7 @@ import scanpy as sc
 import stlearn as st
 import pandas as pd
 import numpy as np
+import os
 
 from dataclasses import dataclass, field
 from typing import Tuple
@@ -11,6 +12,9 @@ from sklearn.preprocessing import OrdinalEncoder
 
 import torch
 from torch.utils.data import DataLoader, Dataset
+import matplotlib.image as img
+import torchvision.transforms as transforms
+
 
 
 class ExpressionDataset(Dataset):
@@ -47,7 +51,6 @@ class Data:
     device: str = field(default = 'cpu')
 
     def set_dataloaders(self, x, data, top_expressed_genes_number=100):
-
         x = np.log(x+1)
         
         spots_values = data.obs.index.values
@@ -92,3 +95,54 @@ class Data:
         dl_test = DataLoader(dataset=ds_test, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
         
         return dl_train, dl_valid, dl_test
+
+class TilesDataset(Dataset):
+    def __init__(self, data, transform):
+        super().__init__()
+        self.data = data.values
+        self.transform = transform
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        img_name, label = self.data[index]
+        img_path = os.path.join(img_name)
+        image = img.imread(img_path)
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, label
+
+
+@dataclass
+class TilesData:
+    dataset: str
+    batch_size: int = 8
+    num_workers: int = 1
+    device: str = field(default = 'cpu')
+    
+    def set_dataloaders(self, data_path:str):
+        data = pd.read_csv(data_path)
+        train_data, test_data = train_test_split(data, stratify=data.has_edge, test_size=0.2, random_state=1)
+
+        train_transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor(), transforms.Normalize([0,0,0],[1,1,1])])
+        test_transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor(), transforms.Normalize([0,0,0],[1,1,1])])
+
+        train_dataset = TilesDataset(train_data, train_transform)
+        test_dataset = TilesDataset(test_data, test_transform) 
+        
+        train_loader = DataLoader(dataset=train_dataset, batch_size = self.batch_size, shuffle=True, num_workers=self.num_workers)
+        test_loader = DataLoader(dataset=test_dataset, batch_size = self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+        return train_loader, test_loader
+
+
+def main(dataset_name):
+    tiles_data = TilesData(dataset=f'/FPST/data/{dataset_name}')
+    train_dl, test_dl = tiles_data.set_dataloaders(data_path=f'/FPST/data/{dataset_name}/adata.csv')
+    return train_dl, test_dl
+
+if __name__ == '__main__':
+    dataset_name = 'Visium_Mouse_Olfactory_Bulb'
+    main(dataset_name)
+

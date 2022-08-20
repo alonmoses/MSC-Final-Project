@@ -8,6 +8,7 @@ services:
       - "./data:/FPST/data"
       - "./notebooks:/FPST/notebooks"
       - "./src:/FPST/src"
+      - "./code:/FPST/code"
     ports:
       - "8888:8888"
     command: jupyter notebook --no-browser --ip='*' --port=8888 --allow-root --NotebookApp.token='' --NotebookApp.password=''

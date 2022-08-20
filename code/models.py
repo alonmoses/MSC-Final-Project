@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-
+import torch.nn.functional as F
 
 class NMF(nn.Module):
     """
@@ -93,6 +93,7 @@ class NNMF(nn.Module):
 
         return output
 
+
 class NeuMF(nn.Module):
     def __init__(self, num_genes, num_spots, params, device):
         super(NeuMF, self).__init__()
@@ -151,3 +152,24 @@ class NeuMF(nn.Module):
         logits = self.affine_output(vector)
         rating = self.logistic(logits)
         return rating.squeeze()
+
+
+class EdgeDetectNN(nn.Module):
+    def __init__(self, params, device:str = 'cpu'):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=10, kernel_size=3)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=3)
+        self.conv2_drop = nn.Dropout2d()
+        self.fc1 = nn.Linear(10580, 1024)
+        self.fc2 = nn.Linear(24010, 2)
+
+    def forward(self, x):
+        x = F.relu(F.max_pool2d(self.conv1(x),2))
+        # x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+        x = x.view(x.shape[0],-1)
+        # x = F.relu(self.fc1(x))
+        # x = F.dropout(x)
+        x = self.fc2(x)
+        return x
+
+
