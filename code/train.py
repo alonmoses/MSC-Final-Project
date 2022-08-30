@@ -1,20 +1,26 @@
+from cmath import nan
 from dataclasses import dataclass, field
 from email.mime import image
 from os import path
 import numpy as np
 import pandas as pd
 from copy import deepcopy
+import matplotlib.image as img
 
 import torch
 import torch.optim as optim
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from sklearn.model_selection import KFold
+from torch.utils.data.sampler import SubsetRandomSampler
+import torchvision.transforms as transforms
 
 import stlearn as st
 
-from load_data import main as load_data_main
-from models import EdgeDetectNN
+from load_data import load_edge_detection_data, load_visium_data, TilesData
+from image_data import generate_tiles
+from models import EdgeDetectNN, NMF
 
 @dataclass
 class engine:
@@ -64,7 +70,6 @@ class engine:
         genes.to(self.device)
         spots.to(self.device)
         y = y.float().to(self.device)
-        # batch = batch[0].to(self.device)
 
         # Set model to train
         self.model.train()
@@ -207,13 +212,12 @@ class EdgeClassifyEngine:
             test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
 
     def train_batch(self, batch):
+        # Set model to train
+        self.model.train()
         images, y = batch
         images.to(self.device)
         y = y.to(self.device)
         images_num, correct_predictions = 0, 0
-
-        # Set model to train
-        self.model.train()
 
         self.optimizer.zero_grad() # Zero gradients
         y_pred = self.model(images).to(self.device) # Predict
@@ -222,7 +226,7 @@ class EdgeClassifyEngine:
         self.optimizer.step() # Optimizer step
 
         _, predicted = torch.max(y_pred.data, 1)
-        images_num += y.size(0)
+        images_num = y.size(0)
         correct_predictions = correct_predictions + (predicted == y).sum().item() / images_num * 100
         
         return loss.item(), correct_predictions
@@ -241,26 +245,92 @@ class EdgeClassifyEngine:
             loss = self.criterion(y_pred, y) # Calculate loss
 
             _, predicted = torch.max(y_pred.data, 1)
-            images_num += y.size(0)
+            images_num = y.size(0)
             correct_predictions = correct_predictions + (predicted == y).sum().item() / images_num * 100
 
             return loss.item(), correct_predictions
+    
+    def generate_labeled_data(self, dataset_name:str):
+        batch_idx = 0
+        adata = generate_tiles(dataset_name)
+        tiles_data = TilesData(dataset=dataset_name, inference=True)
+        _, infer_preds_dl = tiles_data.set_dataloaders(adata.obs, adata.obs)
+        adata.obs['has_edge'] = None
+        self.model.eval()
+        with torch.no_grad():
+            for batch in infer_preds_dl:
+                pred = self.model(batch).to(self.device)
+                _, predicted = torch.max(pred.data, 1)
+                adata.obs.loc[batch_idx: batch_idx+8,'has_edge'] = predicted
+                batch_idx += 8
+        return adata
+            
 
-def main():
+
+
+def train_tiles_for_edges(k_fold=0):
     dataset_name = 'Visium_Mouse_Olfactory_Bulb'
     params = {'learning_rate': 0.001,
               'optimizer': "Adam"}
 
     edge_detect_model = EdgeDetectNN(params)
 
-    train_dl, test_dl = load_data_main(dataset_name=dataset_name)
-    classifier_execute = EdgeClassifyEngine(model= edge_detect_model,
-                                            params = params,
-                                            epochs = 20,
-                                            dl_train = train_dl,
-                                            dl_test = test_dl)
+    if k_fold:
+        tiles_data = TilesData(dataset=f'/FPST/data/{dataset_name}')
+        train_data, test_data = tiles_data.read_data(data_path=f'/FPST/data/{dataset_name}/adata.csv')
+        
+        k_fold = KFold(n_splits=k_fold, shuffle=True,)
+        for fold, (train_indices, valid_indices) in enumerate(k_fold.split(train_data)):
+            print(f'Fold : {fold}')
+            # create samplers
+            train_sampler = SubsetRandomSampler(train_indices) 
+            valid_sampler = SubsetRandomSampler(valid_indices)
+            train_dl, valid_dl = tiles_data.set_dataloaders(train_data, test_data, k_fold=k_fold, train_sampler=train_sampler, valid_sampler=valid_sampler)
+            classifier_execute = EdgeClassifyEngine(model= edge_detect_model,
+                                                    params = params,
+                                                    epochs = 20,
+                                                    dl_train = train_dl,
+                                                    dl_test = valid_dl)
+            classifier_execute.execute()
+        adata = classifier_execute.generate_labeled_data(f'/FPST/data/{dataset_name}')
+        adata.obs.to_csv(f'/FPST/data/{dataset_name}/adata_final.csv')
+    else:
+        train_dl, test_dl = load_edge_detection_data(dataset_name=dataset_name)
+        classifier_execute = EdgeClassifyEngine(model= edge_detect_model,
+                                                params = params,
+                                                epochs = 20,
+                                                dl_train = train_dl,
+                                                dl_test = test_dl)
 
     classifier_execute.execute()
 
+def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', data_type:str = 'random_data'):
+    dataset = load_visium_data(dataset_name, data_type)
+    if data_type == 'random_data':
+        dl_train = dataset.dl_train_top_genes
+        dl_test = dataset.dl_test_top_genes
+    if data_type == 'spots_data':
+        dl_train = dataset.dl_train_spots
+        dl_test = dataset.dl_test_spots
+
+    params = {'learning_rate': 0.001,
+              'optimizer': "RMSprop",
+              'latent_dim': 20,
+              'batch_size': 32}
+
+    nmf_model = NMF(dataset.genes_num, dataset.spots_num, params=params)
+    nmf_execute = engine(model = nmf_model,
+                         model_name = 'NMF',
+                         params = params,
+                         epochs = 10,
+                         dl_train = dl_train,
+                         dl_test = dl_test,
+                         device = 'cpu')
+    nmf_train_losses, nmf_test_losses = nmf_execute.execute()
+    return nmf_train_losses, nmf_test_losses
+
+
 if __name__ == '__main__':
-    main()
+    # train_tiles_for_edges(k_fold=5)
+    train_data_for_imputation(dataset_name = 'Visium_Mouse_Olfactory_Bulb',
+                              data_type = 'spots_data')

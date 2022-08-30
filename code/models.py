@@ -7,7 +7,7 @@ class NMF(nn.Module):
     Neural Matrix Factorizaion model implementation
     """
 
-    def __init__(self, num_genes, num_spots, params, device):
+    def __init__(self, num_genes, num_spots, params, device:str = 'cpu'):
         super().__init__()
         # Get relevant hyperparameters from the params dict
         latent_dim = params['latent_dim']
@@ -19,6 +19,7 @@ class NMF(nn.Module):
                                                                 self.embedding_genes.weight.shape).to(device))
         self.embedding_spots.weight = nn.Parameter(torch.normal(0, .1,
                                                                 self.embedding_spots.weight.shape).to(device))
+        # self.linear = 
 
     def forward(self, gene_indices, spot_indices):
         # Get the gene and spot vector using the embedding layers
@@ -160,7 +161,7 @@ class EdgeDetectNN(nn.Module):
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=10, kernel_size=3)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=3)
         self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(10580, 1024)
+        self.fc1 = nn.Linear(24010, 1024)
         self.fc2 = nn.Linear(24010, 2)
 
     def forward(self, x):

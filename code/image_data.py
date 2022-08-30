@@ -15,7 +15,7 @@ def generate_edge_detected_images(images_path:str, out_path:str, blur_kernel_siz
     for image in os.scandir(images_path):
         img = cv2.imread(image.path)
         if i < 400:
-            cv2.imwrite(f"{out_path}/tiling_classification_train/{i}.jpeg", img)
+            cv2.imwrite(f"{out_path}/tiling_classification_train/{i}_.jpeg", img)
         i += 1
         # Convert to graycsale
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -36,6 +36,7 @@ def generate_edge_detected_images(images_path:str, out_path:str, blur_kernel_siz
         cv2.imwrite(f"{out_path}/edge_detect/canny/{image.path.split('/')[-1]}", edges)
 
 
+
 def tag_images_for_edges(adata, edge_detect_images:str, out_path:str):
     tagged_data = pd.DataFrame(columns=['image_path', 'has_edge'])
     for i, image in enumerate(os.scandir(edge_detect_images)):
@@ -46,11 +47,14 @@ def tag_images_for_edges(adata, edge_detect_images:str, out_path:str):
     tagged_data.to_csv(out_path)
     return adata
 
+def generate_tiles(dataset_name):
+    adata = st.Read10X(dataset_name)
+    adata = tile_image(adata, f'{dataset_name}/tiling/', crop_size=100)
+    return adata
 
 # testing and debuging
 if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
-    data = st.Read10X(dataset_name)
-    adata = tile_image(data, f'{dataset_name}/tiling/', crop_size=100)
+    adata = generate_tiles(dataset_name)
     # generate_edge_detected_images(images_path = f'{dataset_name}/tiling/', out_path = f'{dataset_name}/', blur_kernel_size=(7,7))
     tag_images_for_edges(adata, edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/adata.csv')
