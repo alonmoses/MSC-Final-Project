@@ -195,10 +195,16 @@ class TilesData:
             return train_loader, test_loader
 
 
-def load_visium_data(dataset_name, data_type:str = 'random_data'):
+def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_count:int = 0):
     dataset_path = f'/FPST/data/{dataset_name}'
     st_data = st.Read10X(dataset_path)
+    if min_count:
+        st.pp.filter_genes(st_data, min_count=min_count)
+    if min_cells:
+        st.pp.filter_genes(st_data, min_cells=min_cells)
     X = st_data.X.toarray()
+    
+
     if data_type == 'random_data':
         dataset = Data()
     if data_type == 'spots_data':    

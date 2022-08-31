@@ -125,7 +125,7 @@ class engine:
                     gens.to(device)
                     spots.to(device)
                     y_pred = model(gens, spots)
-                    y_pred = np.clip(a=y_pred, a_min=0, a_max=None)
+                    y_pred = np.clip(a=y_pred, _min=0, a_max=None)
 
                     all_gens.extend(gens.tolist())
                     all_spots.extend(spots.tolist())
@@ -265,8 +265,6 @@ class EdgeClassifyEngine:
                 batch_idx += 8
         return adata
             
-
-
 
 def train_tiles_for_edges(k_fold=0):
     dataset_name = 'Visium_Mouse_Olfactory_Bulb'
