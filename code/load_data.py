@@ -1,3 +1,4 @@
+from distutils.log import debug
 import scanpy as sc
 import stlearn as st
 import pandas as pd
@@ -51,7 +52,7 @@ class Data:
     device: str = field(default = 'cpu')
     top_expressed_genes_number: int = 100
 
-    def prepare_top_genes_data(self, x, data):
+    def prepare_top_genes_data(self, x, data, neighbors_data:str = ''):
         
         x = np.log(x+1)
         
@@ -64,26 +65,47 @@ class Data:
         df_expressions = df_expressions_matrix.stack().reset_index()
         df_expressions.columns = ['spot', 'gene', 'expression']
         
+
+
         # Ordinal encoding the genes and spots for supported type
-        self.oe_genes = OrdinalEncoder()
-        df_expressions[['gene']] = self.oe_genes.fit_transform(df_expressions[['gene']].values)
-        self.oe_spots = OrdinalEncoder()
-        df_expressions[['spot']] = self.oe_spots.fit_transform(df_expressions[['spot']].values)
-        df_expressions[['spot', 'gene']] = df_expressions[['spot', 'gene']].astype(int)
+        # self.oe_genes = OrdinalEncoder()
+        # df_expressions[['gene']] = self.oe_genes.fit_transform(df_expressions[['gene']].values)
+        # self.oe_spots = OrdinalEncoder()
+        # df_expressions[['spot']] = self.oe_spots.fit_transform(df_expressions[['spot']].values)
+        # df_expressions[['spot', 'gene']] = df_expressions[['spot', 'gene']].astype(int)
+
+        # if neighbors_data:
+        df_expressions = self.change_expression_based_on_neighbors(df_expressions, data, neighbors_data)
 
         # Creating DataLoaders - all genes 
-        self.dl_train, self.dl_val, self.dl_test = self.prepare_dl(df_expressions, split_ratio=0.1)
+        self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl(df_expressions, split_ratio=0.1)
         
-        genes_expressed = np.sum(x, axis=0) / (np.count_nonzero(x, axis=0) + 1)
-        top_genes_indices = genes_expressed.argsort()[-self.top_expressed_genes_number:][::-1]
-        self.top_genes_names = data.var.index[top_genes_indices]
-        top_genes_codes = self.oe_genes.transform(X=pd.DataFrame(np.array(self.top_genes_names)).values)[:, 0]
-        mask = df_expressions['gene'].isin(top_genes_codes)
-        df_expressions_top_genes = df_expressions.loc[mask]
-        
-        return df_expressions_top_genes
+        #### get only top 100 expressed genes - NOT IN USE
+        # genes_expressed = np.sum(x, axis=0) / (np.count_nonzero(x, axis=0) + 1)
+        # top_genes_indices = genes_expressed.argsort()[-self.top_expressed_genes_number:][::-1]
+        # self.top_genes_names = data.var.index[top_genes_indices]
+        # top_genes_codes = self.oe_genes.transform(X=pd.DataFrame(np.array(self.top_genes_names)).values)[:, 0]
+        # mask = df_expressions['gene'].isin(top_genes_codes)
+        # df_expressions_top_genes = df_expressions.loc[mask]
+        # return df_expressions_top_genes
 
-    def set_dataloaders(self, x, data):
+        return df_expressions
+
+    def change_expression_based_on_neighbors(self, df_expressions:pd.DataFrame, data, neighbors_data):
+        unique_spots = pd.unique(df_expressions.spot.values)
+        for spot in unique_spots:
+            spot_data = data.obs.loc[spot]
+            expressions_list = self.get_neighbors_expressions(df_expressions, data, spot, spot_data)
+
+    def get_neighbors_expressions(self, df_expressions, data, spot, spot_data):
+        expressions_list = []
+        array_row, array_col = spot_data['array_row'], spot_data['array_col']
+         
+        top_left_spot = data.obs[(data.obs['array_row'] == array_row-1) & (data.obs['array_col'] == array_col-1)].index
+        top_left_spot_data_expressions = df_expressions.loc[df_expressions.spot == top_left_spot[0]]
+
+
+    def set_dataloaders(self, x, data, debug_mode:bool = False):
         df_expressions_top_genes = self.prepare_top_genes_data(x, data)
         # Creating DataLoaders- top N expressed genes
         self.dl_train_top_genes, self.dl_valid_top_genes, self.dl_test_top_genes = self.prepare_dl(df_expressions_top_genes, split_ratio = 0.1)
@@ -108,17 +130,21 @@ class Data:
 
 @dataclass
 class SpotsData(Data):
-    def set_dataloaders(self, x, data):
-        df_expressions_top_genes = self.prepare_top_genes_data(x, data)
+    def set_dataloaders(self, x, data, debug_mode:bool = False):
+        df_expressions = self.prepare_top_genes_data(x, data)
         # Creating DataLoaders- top N expressed genes
-        self.dl_train_spots, self.dl_valid_spots, self.dl_test_spots = self.prepare_dl_spots(df_expressions_top_genes)
+        if debug_mode:
+            self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl_spots(df_expressions, test_size=11850)
+        else:
+            self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl_spots(df_expressions)
+    def prepare_dl_spots(self, expression_df, test_size:int = 1124304):
 
-    def prepare_dl_spots(self, expression_df, test_size:int = 12500):
-        # split data to train, validaion and test sets
-
+        # group the data by spots in order to train batched per spot
         shuffled_data = [df for _, df in expression_df.groupby('spot')]
         random.shuffle(shuffled_data)
         shuffled_dataframe = pd.concat(shuffled_data)
+
+        # split data to train, validaion and test sets
         df_train, df_test = train_test_split(shuffled_dataframe, test_size=test_size, shuffle=False)
         df_train, df_valid = train_test_split(df_train, test_size=test_size, shuffle=False)
         
@@ -195,22 +221,23 @@ class TilesData:
             return train_loader, test_loader
 
 
-def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_count:int = 0):
-    dataset_path = f'/FPST/data/{dataset_name}'
+def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_counts:int = 0, debug_mode:bool = False):
+    dataset_path = f'{dataset_name}'
     st_data = st.Read10X(dataset_path)
-    if min_count:
-        st.pp.filter_genes(st_data, min_count=min_count)
+    if min_counts:
+        st.pp.filter_genes(st_data, min_counts=min_counts)
     if min_cells:
         st.pp.filter_genes(st_data, min_cells=min_cells)
     X = st_data.X.toarray()
-    
-
+    if debug_mode:
+        st_data.var.drop(st_data.var.index[100:], inplace=True)
+        X = X[:,:100]
     if data_type == 'random_data':
-        dataset = Data()
+        dataset = Data(num_workers=5)
     if data_type == 'spots_data':    
-        dataset = SpotsData()
-    dataset.set_dataloaders(X, st_data)
-    return dataset
+        dataset = SpotsData(num_workers=5)
+    dataset.set_dataloaders(X, st_data, debug_mode)
+    return dataset, st_data
 
 def load_edge_detection_data(dataset_name, k_fold=0):
     tiles_data = TilesData(dataset=f'/FPST/data/{dataset_name}')
@@ -219,8 +246,8 @@ def load_edge_detection_data(dataset_name, k_fold=0):
     return train_dl, test_dl
 
 if __name__ == '__main__':
-    dataset_name = 'Visium_Mouse_Olfactory_Bulb'
+    dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
     # load_edge_detection_data(dataset_name)
-    load_visium_data(dataset_name, 'spots_data')
+    load_visium_data(dataset_name, 'spots_data', min_cells=177, min_counts=10, debug_mode=True)
     
 

@@ -21,6 +21,7 @@ import stlearn as st
 from load_data import load_edge_detection_data, load_visium_data, TilesData
 from image_data import generate_tiles
 from models import EdgeDetectNN, NMF
+from losses import RMSELossWithoutZeros
 
 @dataclass
 class engine:
@@ -62,13 +63,17 @@ class engine:
 
             train_epochs_losses = np.append(train_epochs_losses, [train_epoch_loss])
             test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
+            
+            if (len(test_epochs_losses) >=3 and (test_epochs_losses[-2] - test_epochs_losses[-1]) < 0.01 and (test_epochs_losses[-3] - test_epochs_losses[-2]) < 0.01):
+                print("Early stopping")
+                break
 
         return train_epochs_losses, test_epochs_losses
 
     def train_batch(self, batch):
         genes, spots, y = batch
-        genes.to(self.device)
-        spots.to(self.device)
+        genes = genes.to(self.device)
+        spots = spots.to(self.device)
         y = y.float().to(self.device)
 
         # Set model to train
@@ -76,7 +81,7 @@ class engine:
 
         if self.model_name == 'NMF' or self.model_name == 'NNMF' or self.model_name == 'NeuMF':
             y_pred = self.model(genes, spots).to(self.device) # Predict
-            loss = torch.mean((y - y_pred) ** 2) # Calculate loss
+            loss = self.criterion(y_pred, y)#torch.mean((y - y_pred) ** 2) # Calculate loss
 
         if self.model_name == 'PMF':
             loss = self.model(y, genes, spots) # Calculate loss
@@ -93,13 +98,14 @@ class engine:
         
         with torch.no_grad():
             genes, spots, y = batch
-            genes.to(self.device)
-            spots.to(self.device)
+            genes = genes.to(self.device)
+            spots = spots.to(self.device)
             y = y.float().to(self.device)
 
             if self.model_name == 'NMF' or self.model_name == 'NNMF' or self.model_name == 'NeuMF':
-                y_pred = self.model(genes, spots) # Predict
-                loss = torch.mean((y - y_pred) ** 2) # Calculate loss
+                y_pred = self.model(genes, spots).to(self.device) # Predict
+                # loss = torch.mean((y - y_pred) ** 2) # Calculate loss
+                loss = self.criterion(y_pred, y)
 
             if self.model_name == 'PMF':
                 loss = self.model(y, genes, spots) # Calculate loss
@@ -119,15 +125,15 @@ class engine:
         expressions_true = []
 
         with torch.no_grad():
-            for set_dl in [dataset.dl_train_top_genes, dataset.dl_valid_top_genes, dataset.dl_test_top_genes]:
+            for set_dl in [dataset.dl_train, dataset.dl_valid, dataset.dl_test]:
                 for batch in set_dl:
-                    gens, spots, y = batch
-                    gens.to(device)
-                    spots.to(device)
-                    y_pred = model(gens, spots)
-                    y_pred = np.clip(a=y_pred, _min=0, a_max=None)
+                    genes, spots, y = batch
+                    genes = genes.to(device)
+                    spots = spots.to(device)
+                    y_pred = model(genes, spots).to(device)
+                    y_pred = np.clip(a=y_pred.cpu(), a_min=0, a_max=None)
 
-                    all_gens.extend(gens.tolist())
+                    all_gens.extend(genes.tolist())
                     all_spots.extend(spots.tolist())
                     expressions_pred.extend(y_pred.tolist())
                     expressions_true.extend(y.tolist())
@@ -184,6 +190,7 @@ class EdgeClassifyEngine:
         train_epoch_accuracies, train_batch_accuracies = np.array([]), np.array([])
         test_epoch_accuracies, test_batch_accuracies = np.array([]), np.array([])
 
+
         for epoch in range(self.epochs): # Iterate over all epochs
             pbar = tqdm(iter(self.dl_train),
                         desc=f'Train epoch {epoch}/{self.epochs}',
@@ -208,8 +215,15 @@ class EdgeClassifyEngine:
             print(f'Epoch #{epoch} Train Loss: {train_epoch_loss}, Accuracy: {train_epoch_accuracy}')
             print(f'Epoch #{epoch} Test Loss: {test_epoch_loss}, Accuracy: {test_epoch_accuracy}')
 
+
             train_epochs_losses = np.append(train_epochs_losses, [train_epoch_loss])
             test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
+
+            if (len(test_epochs_losses) >=3 
+                and ((test_epochs_losses[-2] - test_epochs_losses[-1]) < 0.001 and (test_epochs_losses[-3] - test_epochs_losses[-2]) < 0.001)
+                and ((train_epochs_losses[-2] - train_epochs_losses[-1]) < 0.001 and (train_epochs_losses[-3] - train_epochs_losses[-2]) < 0.001)):
+                print("Early stopping")
+                break
 
     def train_batch(self, batch):
         # Set model to train
@@ -302,14 +316,11 @@ def train_tiles_for_edges(k_fold=0):
 
     classifier_execute.execute()
 
-def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', data_type:str = 'random_data'):
-    dataset = load_visium_data(dataset_name, data_type)
-    if data_type == 'random_data':
-        dl_train = dataset.dl_train_top_genes
-        dl_test = dataset.dl_test_top_genes
-    if data_type == 'spots_data':
-        dl_train = dataset.dl_train_spots
-        dl_test = dataset.dl_test_spots
+def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', data_type:str = 'random_data', debug_mode:bool = False):
+    dataset, data = load_visium_data(dataset_name, data_type, min_cells=177, min_counts=10, debug_mode=debug_mode)
+    dl_train = dataset.dl_train
+    dl_test = dataset.dl_test
+
 
     params = {'learning_rate': 0.001,
               'optimizer': "RMSprop",
@@ -320,15 +331,16 @@ def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', 
     nmf_execute = engine(model = nmf_model,
                          model_name = 'NMF',
                          params = params,
-                         epochs = 10,
+                         epochs = 2,
+                         criterion = RMSELossWithoutZeros(),
                          dl_train = dl_train,
                          dl_test = dl_test,
                          device = 'cpu')
     nmf_train_losses, nmf_test_losses = nmf_execute.execute()
-    return nmf_train_losses, nmf_test_losses
+    df_expressions_preds, df_expressions_true, reconstructed_data = engine.create_reconstructed_data(nmf_model, dataset, data, 'cpu')
+    engine.cluster_reconstructed_data(reconstructed_data)
 
 
 if __name__ == '__main__':
     # train_tiles_for_edges(k_fold=5)
-    train_data_for_imputation(dataset_name = 'Visium_Mouse_Olfactory_Bulb',
-                              data_type = 'spots_data')
+    train_data_for_imputation(dataset_name='/FPST/data/Visium_Mouse_Olfactory_Bulb', data_type='spots_data', debug_mode=True)
