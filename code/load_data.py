@@ -52,7 +52,7 @@ class Data:
     device: str = field(default = 'cpu')
     top_expressed_genes_number: int = 100
 
-    def prepare_top_genes_data(self, x, data, neighbors_data:str = ''):
+    def prepare_top_genes_data(self, x, data, smooth_type:str = ''):
         
         x = np.log(x+1)
         
@@ -66,16 +66,16 @@ class Data:
         df_expressions.columns = ['spot', 'gene', 'expression']
         
 
+        if smooth_type:
+            df_expressions = self.change_expression_based_on_neighbors(df_expressions, data, smooth_type)
 
         # Ordinal encoding the genes and spots for supported type
-        # self.oe_genes = OrdinalEncoder()
-        # df_expressions[['gene']] = self.oe_genes.fit_transform(df_expressions[['gene']].values)
-        # self.oe_spots = OrdinalEncoder()
-        # df_expressions[['spot']] = self.oe_spots.fit_transform(df_expressions[['spot']].values)
-        # df_expressions[['spot', 'gene']] = df_expressions[['spot', 'gene']].astype(int)
+        self.oe_genes = OrdinalEncoder()
+        df_expressions[['gene']] = self.oe_genes.fit_transform(df_expressions[['gene']].values)
+        self.oe_spots = OrdinalEncoder()
+        df_expressions[['spot']] = self.oe_spots.fit_transform(df_expressions[['spot']].values)
+        df_expressions[['spot', 'gene']] = df_expressions[['spot', 'gene']].astype(int)
 
-        # if neighbors_data:
-        df_expressions = self.change_expression_based_on_neighbors(df_expressions, data, neighbors_data)
 
         # Creating DataLoaders - all genes 
         self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl(df_expressions, split_ratio=0.1)
@@ -91,22 +91,64 @@ class Data:
 
         return df_expressions
 
-    def change_expression_based_on_neighbors(self, df_expressions:pd.DataFrame, data, neighbors_data):
+    def change_expression_based_on_neighbors(self, df_expressions:pd.DataFrame, data, smooth_type):
         unique_spots = pd.unique(df_expressions.spot.values)
         for spot in unique_spots:
             spot_data = data.obs.loc[spot]
-            expressions_list = self.get_neighbors_expressions(df_expressions, data, spot, spot_data)
+            spot_expression_with_neighbors = self.get_neighbors_expressions(df_expressions, data, spot, spot_data, smooth_type)
+            df_expressions = self.calculate_smoothed_expression(df_expressions, spot, spot_expression_with_neighbors, smooth_type)
+        
+        return df_expressions
 
-    def get_neighbors_expressions(self, df_expressions, data, spot, spot_data):
-        expressions_list = []
+    @staticmethod
+    def get_neighbors_expressions(df_expressions, data, spot, spot_data, smooth_type):
+        if smooth_type in ['mean', 'mean_wrt_distance']:
+            neighbors_list = [(-1,-1), (-1,0),  (-1,1),  (0,-1),  (0,1),  (1,-1),  (1,0), (1,1)]
+        elif smooth_type in ['mean_wrt_distance_x2', 'mean_wrt_edge']:
+            neighbors_list = [(-2,-2), (-2,-1), (-2,0), (-2,1), (-2,2),
+                              (-1,-2), (-1,-1), (-1,0),  (-1,1), (-1,2),
+                              (0,-2), (0,-1),  (0,1), (0,2),
+                              (1,-2), (1,-1), (1,0), (1,1), (1,2), 
+                              (2,-2), (2,-1), (2,0), (2,1), (2,2)]
         array_row, array_col = spot_data['array_row'], spot_data['array_col']
-         
-        top_left_spot = data.obs[(data.obs['array_row'] == array_row-1) & (data.obs['array_col'] == array_col-1)].index
-        top_left_spot_data_expressions = df_expressions.loc[df_expressions.spot == top_left_spot[0]]
+        spot_expression = df_expressions.loc[df_expressions.spot == spot]
+
+        for row_ind, col_ind in neighbors_list:
+            neighbor_name = data.obs[(data.obs['array_row'] == array_row+row_ind) & (data.obs['array_col'] == array_col+col_ind)].index
+            # is_neighbor = // TODO: 1 if the spot is a neighbor or 0 if not
+            if len(neighbor_name) == 1:
+                top_left_spot_data_expressions = df_expressions.loc[df_expressions.spot == neighbor_name[0]]
+                spot_expression[f'{neighbor_name[0]}_{row_ind}_{col_ind}'] = top_left_spot_data_expressions['expression'].values.astype(float)
+        
+        return spot_expression
+
+    def calculate_smoothed_expression(self, df_expressions, spot, spot_expression_with_neighbors, smooth_type):
+        expression_column_names = spot_expression_with_neighbors.columns[2:]
+        if smooth_type in ['mean', 'mean_wrt_distance_x2']:
+            spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
+        elif smooth_type in ['mean_wrt_distance']:
+            neighbors_names = expression_column_names[1:]
+            spot_expression_with_neighbors['neighbors_mean'] = spot_expression_with_neighbors[neighbors_names].mean(axis=1)
+            spot_expression_with_neighbors['expression_mean'] = (spot_expression_with_neighbors['expression'] + spot_expression_with_neighbors['neighbors_mean']) / 2
+        elif smooth_type in ['mean_wrt_edge']:
+            edge_data = pd.read_csv(f'{self.dataset}/edge_side_final.csv')
+            spot_edge_location = edge_data[edge_data['spot'] == spot].has_edge.values[0]
+            for neighbor_and_location in expression_column_names[1:]:
+                neighbor_name, relative_row, relative_col = neighbor_and_location.split('_')
+                neighbor_edge_location = edge_data[edge_data['spot'] == neighbor_name].has_edge.values[0]
+                if neighbor_edge_location != spot_edge_location:
+                    spot_expression_with_neighbors.drop(columns=[neighbor_and_location], inplace=True)
+                    expression_column_names = expression_column_names.drop(neighbor_and_location)
+            spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
+                
+        spot_expression_with_neighbors.drop(columns=spot_expression_with_neighbors.columns[2:-1], inplace = True)
+        df_expressions.loc[df_expressions.spot == spot, ['expression']] = spot_expression_with_neighbors['expression_mean'].astype(np.float32)
+
+        return df_expressions
 
 
-    def set_dataloaders(self, x, data, debug_mode:bool = False):
-        df_expressions_top_genes = self.prepare_top_genes_data(x, data)
+    def set_dataloaders(self, x, data, debug_mode:bool = False, smooth_type:str = ''):
+        df_expressions_top_genes = self.prepare_top_genes_data(x, data, smooth_type)
         # Creating DataLoaders- top N expressed genes
         self.dl_train_top_genes, self.dl_valid_top_genes, self.dl_test_top_genes = self.prepare_dl(df_expressions_top_genes, split_ratio = 0.1)
 
@@ -130,13 +172,14 @@ class Data:
 
 @dataclass
 class SpotsData(Data):
-    def set_dataloaders(self, x, data, debug_mode:bool = False):
-        df_expressions = self.prepare_top_genes_data(x, data)
+    def set_dataloaders(self, x, data, debug_mode:bool = False, smooth_type:str = ''):
+        df_expressions = self.prepare_top_genes_data(x, data, smooth_type)
         # Creating DataLoaders- top N expressed genes
         if debug_mode:
             self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl_spots(df_expressions, test_size=11850)
         else:
             self.dl_train, self.dl_valid, self.dl_test = self.prepare_dl_spots(df_expressions)
+    
     def prepare_dl_spots(self, expression_df, test_size:int = 1124304):
 
         # group the data by spots in order to train batched per spot
@@ -221,7 +264,69 @@ class TilesData:
             return train_loader, test_loader
 
 
-def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_counts:int = 0, debug_mode:bool = False):
+class PairsTilesDataset(Dataset):
+    def __init__(self, data, transform, inference:bool = False):
+        super().__init__()
+        self.data = data.values
+        self.transform = transform
+        self.inference = inference
+    
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        if self.inference:
+            img1, img2 = self.data[index][-2:]
+        else:
+            img1, img2, label = self.data[index]
+        img_path_1 = os.path.join(img1)
+        image1 = img.imread(img_path_1)
+        img_path_2 = os.path.join(img2)
+        image2 = img.imread(img_path_2)
+        if self.transform is not None:
+            image1 = self.transform(image1)
+            image2 = self.transform(image2)
+        if self.inference:
+            return image1, image2
+        return image1, image2, label
+
+@dataclass
+class PairsTilesData:
+    dataset: str
+    batch_size: int = 8
+    num_workers: int = 1
+    device: str = field(default = 'cpu')
+    inference: bool = False
+    
+    def read_data(self, data_path:str):
+        data = pd.read_csv(data_path)
+        train_data, test_data = train_test_split(data, stratify=data.are_neighbors, test_size=0.2, random_state=42)
+        return train_data, test_data
+
+    def set_dataloaders(self, train_data, test_data, k_fold=0, train_sampler=None, valid_sampler=None):
+        train_transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor(), transforms.Normalize([0,0,0],[1,1,1])])
+        test_transform = transforms.Compose([transforms.ToPILImage(), transforms.ToTensor(), transforms.Normalize([0,0,0],[1,1,1])])
+
+        if k_fold:
+            train_dataset = PairsTilesDataset(train_data, train_transform)
+            valid_dataset = PairsTilesDataset(train_data, train_transform)
+            
+            train_loader = DataLoader(dataset=train_dataset, batch_size = self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=train_sampler)
+            valid_loader = DataLoader(dataset=valid_dataset, batch_size = self.batch_size, shuffle=False, num_workers=self.num_workers, sampler=valid_sampler) 
+
+            return train_loader, valid_loader
+
+        else:
+            train_dataset = PairsTilesDataset(train_data, train_transform, self.inference)
+            test_dataset = PairsTilesDataset(test_data, test_transform, self.inference) 
+            
+            train_loader = DataLoader(dataset=train_dataset, batch_size = self.batch_size, shuffle=True, num_workers=self.num_workers)
+            test_loader = DataLoader(dataset=test_dataset, batch_size = self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+            return train_loader, test_loader
+
+        
+def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_counts:int = 0, smooth_type:str = '', debug_mode:bool = False):
     dataset_path = f'{dataset_name}'
     st_data = st.Read10X(dataset_path)
     if min_counts:
@@ -233,21 +338,27 @@ def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int 
         st_data.var.drop(st_data.var.index[100:], inplace=True)
         X = X[:,:100]
     if data_type == 'random_data':
-        dataset = Data(num_workers=5)
+        dataset = Data(dataset=dataset_name, num_workers=5)
     if data_type == 'spots_data':    
         dataset = SpotsData(num_workers=5)
-    dataset.set_dataloaders(X, st_data, debug_mode)
+    dataset.set_dataloaders(X, st_data, debug_mode, smooth_type)
     return dataset, st_data
 
-def load_edge_detection_data(dataset_name, k_fold=0):
+def load_edge_detection_data(dataset_name):
     tiles_data = TilesData(dataset=f'/FPST/data/{dataset_name}')
-    train_data, test_data = tiles_data.read_data(data_path=f'/FPST/data/{dataset_name}/adata.csv')
+    train_data, test_data = tiles_data.read_data(data_path=f'{dataset_name}/adata.csv')
+    train_dl, test_dl = tiles_data.set_dataloaders(train_data, test_data)
+    return train_dl, test_dl
+
+def load_pairs_tiles_data(dataset_name):
+    tiles_data = PairsTilesData(dataset=f'/FPST/data/{dataset_name}')
+    train_data, test_data = tiles_data.read_data(data_path=f'{dataset_name}/pairs_neighborhood.csv')
     train_dl, test_dl = tiles_data.set_dataloaders(train_data, test_data)
     return train_dl, test_dl
 
 if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
     # load_edge_detection_data(dataset_name)
-    load_visium_data(dataset_name, 'spots_data', min_cells=177, min_counts=10, debug_mode=True)
-    
+    # load_pairs_tiles_data(dataset_name)
+    load_visium_data(dataset_name, 'spots_data', min_cells=177, min_counts=10, smooth_type='mean_wrt_edge', debug_mode=True)
 

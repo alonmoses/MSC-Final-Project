@@ -18,9 +18,9 @@ import torchvision.transforms as transforms
 
 import stlearn as st
 
-from load_data import load_edge_detection_data, load_visium_data, TilesData
+from load_data import load_edge_detection_data, load_visium_data, TilesData, PairsTilesData
 from image_data import generate_tiles
-from models import EdgeDetectNN, NMF
+from models import NMF, EdgeDetectNN, NeighborsDetectNN
 from losses import RMSELossWithoutZeros
 
 @dataclass
@@ -219,12 +219,6 @@ class EdgeClassifyEngine:
             train_epochs_losses = np.append(train_epochs_losses, [train_epoch_loss])
             test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
 
-            if (len(test_epochs_losses) >=3 
-                and ((test_epochs_losses[-2] - test_epochs_losses[-1]) < 0.001 and (test_epochs_losses[-3] - test_epochs_losses[-2]) < 0.001)
-                and ((train_epochs_losses[-2] - train_epochs_losses[-1]) < 0.001 and (train_epochs_losses[-3] - train_epochs_losses[-2]) < 0.001)):
-                print("Early stopping")
-                break
-
     def train_batch(self, batch):
         # Set model to train
         self.model.train()
@@ -278,18 +272,127 @@ class EdgeClassifyEngine:
                 adata.obs.loc[batch_idx: batch_idx+8,'has_edge'] = predicted
                 batch_idx += 8
         return adata
-            
 
-def train_tiles_for_edges(k_fold=0):
-    dataset_name = 'Visium_Mouse_Olfactory_Bulb'
+
+@dataclass
+class NeighborsClassifyEngine:
+    model: nn.Module
+    params: dict
+    dl_train: DataLoader
+    dl_test: DataLoader
+    verbose: str = field(default=True)
+    epochs: int = field(default = 20)
+    criterion: nn = field(default_factory=nn.BCEWithLogitsLoss)
+    device: str = field(default='cpu')
+
+    def __post_init__(self):
+        print(self.model)
+        self.model = self.model.to(self.device)
+        self.set_optimizer()
+
+    def set_optimizer(self):
+        self.optimizer = getattr(optim, self.params['optimizer'])(self.model.parameters(), lr=self.params['learning_rate'])
+    
+    def execute(self) -> tuple([np.array, np.array]):
+        train_epochs_losses, train_batch_losses = np.array([]), np.array([])
+        test_epochs_losses, test_batch_losses = np.array([]), np.array([])
+        train_epoch_accuracies, train_batch_accuracies = np.array([]), np.array([])
+        test_epoch_accuracies, test_batch_accuracies = np.array([]), np.array([])
+
+
+        for epoch in range(self.epochs): # Iterate over all epochs
+            pbar = tqdm(iter(self.dl_train),
+                        desc=f'Train epoch {epoch}/{self.epochs}',
+                        disable=not self.verbose)
+
+            for batch in pbar: # Iterate over all batches
+                train_batch_loss, train_batch_accuracy = self.train_batch(batch)
+                train_batch_losses = np.append(train_batch_losses, [train_batch_loss])
+                train_batch_accuracies = np.append(train_batch_accuracies, [train_batch_accuracy])
+
+            for batch in self.dl_test: # Iterate over all batches
+                test_batch_loss, test_batch_accuracy = self.eval_batch(batch)
+                test_batch_losses = np.append(test_batch_losses, [test_batch_loss])
+                test_batch_accuracies = np.append(test_batch_accuracies, [test_batch_accuracy])  
+
+            train_epoch_loss = np.sqrt(np.nanmean(train_batch_losses))
+            train_epoch_accuracy = np.mean(train_batch_accuracies)
+
+            test_epoch_loss = np.sqrt(np.nanmean(test_batch_losses))
+            test_epoch_accuracy = np.mean(test_batch_accuracies)
+
+            print(f'Epoch #{epoch} Train Loss: {train_epoch_loss}, Accuracy: {train_epoch_accuracy}')
+            print(f'Epoch #{epoch} Test Loss: {test_epoch_loss}, Accuracy: {test_epoch_accuracy}')
+
+
+            train_epochs_losses = np.append(train_epochs_losses, [train_epoch_loss])
+            test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
+
+    def train_batch(self, batch):
+        # Set model to train
+        self.model.train()
+        images1, images2 , y = batch
+        images1 = images1.to(self.device)
+        images2 = images2.to(self.device)
+        y = y.float().to(self.device)
+        images_num, correct_predictions = 0, 0
+
+        self.optimizer.zero_grad() # Zero gradients
+        y_pred = self.model(images1, images2).to(self.device) # Predict
+        loss = self.criterion(y_pred, y) # Calculate loss
+        loss.backward() # Backpropagate
+        self.optimizer.step() # Optimizer step
+
+        # _, predicted = torch.max(y_pred.data, 1)
+        images_num = y.size(0)
+        correct_predictions = correct_predictions + (y_pred == y).sum().item() / images_num * 100
+        
+        return loss.item(), correct_predictions
+
+    def eval_batch(self, batch):
+        # Set model to eval
+        self.model.eval()
+        images_num, correct_predictions = 0, 0
+
+        with torch.no_grad():
+            images1, images2 , y = batch
+            images1 = images1.to(self.device)
+            images2 = images2.to(self.device)
+            y = y.float().to(self.device)
+
+            y_pred = self.model(images1, images2).to(self.device) # Predict
+            loss = self.criterion(y_pred, y) # Calculate loss
+
+            images_num = y.size(0)
+            correct_predictions = correct_predictions + (y_pred == y).sum().item() / images_num * 100
+
+            return loss.item(), correct_predictions
+    
+    def generate_labeled_data(self, dataset_name:str):
+        batch_idx = 0
+        adata = generate_tiles(dataset_name)
+        tiles_data = PairsTilesData(dataset=dataset_name, inference=True)
+        _, infer_preds_dl = tiles_data.set_dataloaders(adata.obs, adata.obs)
+        adata.obs['has_edge'] = None
+        self.model.eval()
+        with torch.no_grad():
+            for batch in infer_preds_dl:
+                pred = self.model(batch).to(self.device)
+                _, predicted = torch.max(pred.data, 1)
+                adata.obs.loc[batch_idx: batch_idx+8,'has_edge'] = predicted
+                batch_idx += 8
+        return adata
+
+
+def train_tiles_for_edges(dataset_name, k_fold=0):
     params = {'learning_rate': 0.001,
               'optimizer': "Adam"}
 
     edge_detect_model = EdgeDetectNN(params)
 
     if k_fold:
-        tiles_data = TilesData(dataset=f'/FPST/data/{dataset_name}')
-        train_data, test_data = tiles_data.read_data(data_path=f'/FPST/data/{dataset_name}/adata.csv')
+        tiles_data = TilesData(dataset=dataset_name)
+        train_data, test_data = tiles_data.read_data(data_path=f'{dataset_name}/edge_side.csv')
         
         k_fold = KFold(n_splits=k_fold, shuffle=True,)
         for fold, (train_indices, valid_indices) in enumerate(k_fold.split(train_data)):
@@ -304,8 +407,43 @@ def train_tiles_for_edges(k_fold=0):
                                                     dl_train = train_dl,
                                                     dl_test = valid_dl)
             classifier_execute.execute()
-        adata = classifier_execute.generate_labeled_data(f'/FPST/data/{dataset_name}')
-        adata.obs.to_csv(f'/FPST/data/{dataset_name}/adata_final.csv')
+        adata = classifier_execute.generate_labeled_data(dataset_name)
+        adata.obs.to_csv(f'{dataset_name}/edge_side_final.csv')
+    else:
+        train_dl, test_dl = load_edge_detection_data(dataset_name=dataset_name)
+        classifier_execute = EdgeClassifyEngine(model= edge_detect_model,
+                                                params = params,
+                                                epochs = 20,
+                                                dl_train = train_dl,
+                                                dl_test = test_dl)
+
+    classifier_execute.execute()
+
+def train_paris_tiles_for_neighborhood(dataset_name, k_fold=0):
+    params = {'learning_rate': 0.001,
+              'optimizer': "Adam"}
+
+    edge_detect_model = NeighborsDetectNN(params)
+
+    if k_fold:
+        tiles_data = PairsTilesData(dataset=dataset_name)
+        train_data, test_data = tiles_data.read_data(data_path=f'{dataset_name}/pairs_neighborhood.csv')
+        
+        k_fold = KFold(n_splits=k_fold, shuffle=True,)
+        for fold, (train_indices, valid_indices) in enumerate(k_fold.split(train_data)):
+            print(f'Fold : {fold}')
+            # create samplers
+            train_sampler = SubsetRandomSampler(train_indices) 
+            valid_sampler = SubsetRandomSampler(valid_indices)
+            train_dl, valid_dl = tiles_data.set_dataloaders(train_data, test_data, k_fold=k_fold, train_sampler=train_sampler, valid_sampler=valid_sampler)
+            classifier_execute = NeighborsClassifyEngine(model= edge_detect_model,
+                                                    params = params,
+                                                    epochs = 1,
+                                                    dl_train = train_dl,
+                                                    dl_test = valid_dl)
+            classifier_execute.execute()
+        adata = classifier_execute.generate_labeled_data(dataset_name)
+        adata.obs.to_csv(f'{dataset_name}/pairs_neighborhood_final.csv')
     else:
         train_dl, test_dl = load_edge_detection_data(dataset_name=dataset_name)
         classifier_execute = EdgeClassifyEngine(model= edge_detect_model,
@@ -317,7 +455,7 @@ def train_tiles_for_edges(k_fold=0):
     classifier_execute.execute()
 
 def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', data_type:str = 'random_data', debug_mode:bool = False):
-    dataset, data = load_visium_data(dataset_name, data_type, min_cells=177, min_counts=10, debug_mode=debug_mode)
+    dataset, data = load_visium_data(dataset_name, data_type, min_cells=177, min_counts=10, smooth_type='mean_wrt_edge', debug_mode=debug_mode)
     dl_train = dataset.dl_train
     dl_test = dataset.dl_test
 
@@ -342,5 +480,7 @@ def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', 
 
 
 if __name__ == '__main__':
-    # train_tiles_for_edges(k_fold=5)
-    train_data_for_imputation(dataset_name='/FPST/data/Visium_Mouse_Olfactory_Bulb', data_type='spots_data', debug_mode=True)
+    dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
+    # train_tiles_for_edges(dataset_name, k_fold=5)
+    # train_paris_tiles_for_neighborhood(dataset_name=dataset_name, k_fold=5)
+    train_data_for_imputation(dataset_name=dataset_name, data_type='spots_data', debug_mode=True)

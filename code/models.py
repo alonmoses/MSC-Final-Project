@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import numpy as np
+from numpy.linalg import norm
 
 class NMF(nn.Module):
     """
@@ -162,7 +164,7 @@ class EdgeDetectNN(nn.Module):
         self.conv2 = nn.Conv2d(10, 20, kernel_size=3)
         self.conv2_drop = nn.Dropout2d()
         self.fc1 = nn.Linear(24010, 1024)
-        self.fc2 = nn.Linear(24010, 2)
+        self.fc2 = nn.Linear(24010, 4)
 
     def forward(self, x):
         x = F.relu(F.max_pool2d(self.conv1(x),2))
@@ -174,3 +176,39 @@ class EdgeDetectNN(nn.Module):
         return x
 
 
+class NeighborsDetectNN(nn.Module):
+    def __init__(self, params, device:str = 'cpu'):
+        super().__init__()
+        self.conv1_1 = nn.Conv2d(in_channels=3, out_channels=10, kernel_size=3)
+        self.conv1_2 = nn.Conv2d(10, 20, kernel_size=3)
+        self.conv1_2_drop = nn.Dropout2d()
+        self.fc1_1 = nn.Linear(10580, 1024)
+        self.fc1_2 = nn.Linear(1024, 40)
+
+        self.conv2_1 = nn.Conv2d(in_channels=3, out_channels=10, kernel_size=3)
+        self.conv2_2 = nn.Conv2d(10, 20, kernel_size=3)
+        self.conv2_2_drop = nn.Dropout2d()
+        self.fc2_1 = nn.Linear(10580, 1024)
+        self.fc2_2 = nn.Linear(1024, 40)
+
+        self.cos = torch.nn.CosineSimilarity(dim=1)
+        
+    def forward(self, x1, x2):
+        x1 = F.relu(F.max_pool2d(self.conv1_1(x1),2))
+        x1 = F.relu(F.max_pool2d(self.conv1_2_drop(self.conv1_2(x1)), 2))
+        x1 = x1.view(x1.shape[0],-1)
+        x1 = F.relu(self.fc1_1(x1))
+        x1 = F.dropout(x1)
+        # x1 = self.fc1_2(x1)
+
+        x2 = F.relu(F.max_pool2d(self.conv2_1(x2),2))
+        x2 = F.relu(F.max_pool2d(self.conv2_2_drop(self.conv2_2(x2)), 2))
+        x2 = x2.view(x2.shape[0],-1)
+        x2 = F.relu(self.fc2_1(x2))
+        x2 = F.dropout(x2)
+        # x2 = self.fc2_2(x2)        
+
+        output = torch.round(torch.sigmoid(self.cos(x1, x2)))
+        # similarity = np.dot(x1,x2)/(norm(x1)*norm(x2))
+        
+        return output

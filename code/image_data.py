@@ -35,9 +35,7 @@ def generate_edge_detected_images(images_path:str, out_path:str, blur_kernel_siz
         # Display Canny Edge Detection Image
         cv2.imwrite(f"{out_path}/edge_detect/canny/{image.path.split('/')[-1]}", edges)
 
-
-
-def tag_images_for_edges(adata, edge_detect_images:str, out_path:str):
+def tag_images_for_edges(edge_detect_images:str, out_path:str):
     tagged_data = pd.DataFrame(columns=['image_path', 'has_edge'])
     for i, image in enumerate(os.scandir(edge_detect_images)):
         user_label = input(f"Enter label for image {i}: ")
@@ -45,7 +43,19 @@ def tag_images_for_edges(adata, edge_detect_images:str, out_path:str):
         tagged_data.loc[image.path] = row
         if i > 400: break
     tagged_data.to_csv(out_path)
-    return adata
+
+def tag_images_pairs_for_neighborhood(edge_detect_images:str, out_path:str):
+    tagged_data = pd.DataFrame(columns=['image_path_1', 'image_path_2', 'are_neighbors'])
+    for i, image in enumerate(os.scandir(edge_detect_images)):
+        user_label = input(f"Enter label for image {i} and image {i+1}: ")
+        row = {'image_path_1': f'{edge_detect_images}{i}.jpeg', 'image_path_2': f'{edge_detect_images}{i+1}.jpeg', 'are_neighbors': user_label}
+        tagged_data = tagged_data.append(row, ignore_index=True)
+        user_label = input(f"Enter label for image {i} and image {i+2}: ")
+        row = {'image_path_1': f'{edge_detect_images}{i}.jpeg', 'image_path_2': f'{edge_detect_images}{i+2}.jpeg', 'are_neighbors': user_label}
+        tagged_data = tagged_data.append(row, ignore_index=True)
+        if i > 200: break
+    
+    tagged_data.to_csv(out_path)
 
 def generate_tiles(dataset_name):
     adata = st.Read10X(dataset_name)
@@ -55,6 +65,6 @@ def generate_tiles(dataset_name):
 # testing and debuging
 if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
-    adata = generate_tiles(dataset_name)
     # generate_edge_detected_images(images_path = f'{dataset_name}/tiling/', out_path = f'{dataset_name}/', blur_kernel_size=(7,7))
-    tag_images_for_edges(adata, edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/adata.csv')
+    tag_images_for_edges(edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/edge_side.csv')
+    # tag_images_pairs_for_neighborhood(edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/pairs_neighborhood.csv')
