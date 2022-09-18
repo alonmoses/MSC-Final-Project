@@ -22,6 +22,7 @@ from load_data import load_edge_detection_data, load_visium_data, TilesData, Pai
 from image_data import generate_tiles
 from models import NMF, EdgeDetectNN, NeighborsDetectNN
 from losses import RMSELossWithoutZeros
+import matplotlib.pyplot as plt
 
 @dataclass
 class engine:
@@ -155,6 +156,17 @@ class engine:
         return df_expressions_preds, df_expressions_true, new_data
     
     def cluster_reconstructed_data(data, plot=True):
+        colors_map_dict = {
+            '#1f77b4': 1, # Blue
+            '#f87f13': 0, # Orange
+            '#359c62': 3, # Green
+            '#d32929': 4, # Red
+            '#69308e': 5, # Purple
+            '#8c564c': 6, # Brown
+            '#f33ca9': 2  # Pink
+        }
+        clusters_colors = [c[0] for c in sorted(colors_map_dict.items(), key=lambda i: i[1])]
+
         new_data_clusters = deepcopy(data)
         st.pp.normalize_total(new_data_clusters)
         # run PCA for gene expression data
@@ -162,8 +174,11 @@ class engine:
         # K-means clustering
         st.tl.clustering.kmeans(new_data_clusters, n_clusters=7, use_data="X_pca", key_added="X_pca_kmeans")
         if plot:
+            f = plt.figure()
+            new_data_clusters.uns['X_pca_kmeans_colors'] = clusters_colors
             st.pl.cluster_plot(new_data_clusters, use_label="X_pca_kmeans")
-
+            plt.title('Train')
+            plt.show()
 
 @dataclass
 class EdgeClassifyEngine:

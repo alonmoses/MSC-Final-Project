@@ -4,6 +4,7 @@ import cv2
 import os
 from typing import Tuple
 import pandas as pd
+import numpy as np
 
 
 def tile_image(adata, out_path:str='./tiling', crop_size:int = 40):
@@ -27,13 +28,13 @@ def generate_edge_detected_images(images_path:str, out_path:str, blur_kernel_siz
         sobely = cv2.Sobel(src=img_blur, ddepth=cv2.CV_64F, dx=0, dy=1, ksize=5) # Sobel Edge Detection on the Y axis
         sobelxy = cv2.Sobel(src=img_blur, ddepth=cv2.CV_64F, dx=1, dy=1, ksize=5) # Combined X and Y Sobel Edge Detection
         # Display Sobel Edge Detection Images
-        cv2.imwrite(f"{out_path}/edge_detect/x/{image.path.split('/')[-1]}", sobelx)
-        cv2.imwrite(f"{out_path}/edge_detect/y/{image.path.split('/')[-1]}", sobely)
-        cv2.imwrite(f"{out_path}/edge_detect/xy/{image.path.split('/')[-1]}", sobelxy)
+        # cv2.imwrite(f"{out_path}/edge_detect/x/{image.path.split('/')[-1]}", sobelx)
+        # cv2.imwrite(f"{out_path}/edge_detect/y/{image.path.split('/')[-1]}", sobely)
+        # cv2.imwrite(f"{out_path}/edge_detect/xy/{image.path.split('/')[-1]}", sobelxy)
         # Canny Edge Detection
         edges = cv2.Canny(image=img_blur, threshold1=100, threshold2=200) # Canny Edge Detection
         # Display Canny Edge Detection Image
-        cv2.imwrite(f"{out_path}/edge_detect/canny/{image.path.split('/')[-1]}", edges)
+        cv2.imwrite(f"{out_path}/edge_detect/{image.path.split('/')[-1]}", edges)
 
 def tag_images_for_edges(edge_detect_images:str, out_path:str):
     tagged_data = pd.DataFrame(columns=['image_path', 'has_edge'])
@@ -57,14 +58,25 @@ def tag_images_pairs_for_neighborhood(edge_detect_images:str, out_path:str):
     
     tagged_data.to_csv(out_path)
 
+def claculate_tiles_pixels_mean(adata):
+    adata.obs['tile_mean'] = np.float32()
+    for i, row in adata.obs.iterrows():
+        spot_tile = cv2.imread(row.tile_path)
+        tile_pixels_mean = np.mean(spot_tile)
+        adata.obs.loc[i,'tile_mean'] = tile_pixels_mean
+    return adata
+
 def generate_tiles(dataset_name):
     adata = st.Read10X(dataset_name)
-    adata = tile_image(adata, f'{dataset_name}/tiling/', crop_size=100)
+    adata = tile_image(adata, f'{dataset_name}/tiling_20/', crop_size=20)
+    adata = claculate_tiles_pixels_mean(adata)
+    adata.obs.to_csv(f'{dataset_name}/tiles_pixels_mean_final.csv')
     return adata
 
 # testing and debuging
 if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
-    # generate_edge_detected_images(images_path = f'{dataset_name}/tiling/', out_path = f'{dataset_name}/', blur_kernel_size=(7,7))
-    tag_images_for_edges(edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/edge_side.csv')
+    generate_tiles(dataset_name=dataset_name)
+    # generate_edge_detected_images(images_path = f'{dataset_name}/full_image/original', out_path = f'{dataset_name}/full_image/', blur_kernel_size=(11,11))
+    # tag_images_for_edges(edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/edge_side.csv')
     # tag_images_pairs_for_neighborhood(edge_detect_images = f'{dataset_name}/tiling_classification_train/', out_path=f'{dataset_name}/pairs_neighborhood.csv')

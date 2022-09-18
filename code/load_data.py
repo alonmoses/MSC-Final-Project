@@ -104,7 +104,8 @@ class Data:
     def get_neighbors_expressions(df_expressions, data, spot, spot_data, smooth_type):
         if smooth_type in ['mean', 'mean_wrt_distance']:
             neighbors_list = [(-1,-1), (-1,0),  (-1,1),  (0,-1),  (0,1),  (1,-1),  (1,0), (1,1)]
-        elif smooth_type in ['mean_wrt_distance_x2', 'mean_wrt_edge']:
+        elif smooth_type in ['mean_wrt_distance_x2', 'mean_wrt_edge', 'mean_wrt_to_neighbors_tiles_means',
+                             'mean_wrt_to_neighbors_tiles_means_remove_highest_distance']:
             neighbors_list = [(-2,-2), (-2,-1), (-2,0), (-2,1), (-2,2),
                               (-1,-2), (-1,-1), (-1,0),  (-1,1), (-1,2),
                               (0,-2), (0,-1),  (0,1), (0,2),
@@ -126,10 +127,12 @@ class Data:
         expression_column_names = spot_expression_with_neighbors.columns[2:]
         if smooth_type in ['mean', 'mean_wrt_distance_x2']:
             spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
+       
         elif smooth_type in ['mean_wrt_distance']:
             neighbors_names = expression_column_names[1:]
             spot_expression_with_neighbors['neighbors_mean'] = spot_expression_with_neighbors[neighbors_names].mean(axis=1)
             spot_expression_with_neighbors['expression_mean'] = (spot_expression_with_neighbors['expression'] + spot_expression_with_neighbors['neighbors_mean']) / 2
+        
         elif smooth_type in ['mean_wrt_edge']:
             edge_data = pd.read_csv(f'{self.dataset}/edge_side_final.csv')
             spot_edge_location = edge_data[edge_data['spot'] == spot].has_edge.values[0]
@@ -140,7 +143,31 @@ class Data:
                     spot_expression_with_neighbors.drop(columns=[neighbor_and_location], inplace=True)
                     expression_column_names = expression_column_names.drop(neighbor_and_location)
             spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
-                
+       
+        elif smooth_type in ['mean_wrt_to_neighbors_tiles_means']:
+            tiles_pixels_mean = pd.read_csv(f'{self.dataset}/tiles_pixels_mean_final.csv')
+            spot_pixels_mean = tiles_pixels_mean[tiles_pixels_mean['spot'] == spot].tile_mean.values[0]
+            for neighbor_and_location in expression_column_names[1:]:
+                neighbor_name, _, _ = neighbor_and_location.split('_')
+                neighbor_pixels_mean = tiles_pixels_mean[tiles_pixels_mean['spot'] == neighbor_name].tile_mean.values[0]
+                if abs(spot_pixels_mean - neighbor_pixels_mean) > 25:
+                    spot_expression_with_neighbors.drop(columns=[neighbor_and_location], inplace=True)
+                    expression_column_names = expression_column_names.drop(neighbor_and_location)
+            spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
+
+        elif smooth_type in['mean_wrt_to_neighbors_tiles_means_remove_highest_distance']:
+            tiles_pixels_mean = pd.read_csv(f'{self.dataset}/tiles_pixels_mean_final.csv')
+            spot_pixels_mean = tiles_pixels_mean[tiles_pixels_mean['spot'] == spot].tile_mean.values[0]
+            max_distance = 0
+            for neighbor_and_location in expression_column_names[1:]:
+                neighbor_name, _, _ = neighbor_and_location.split('_')
+                neighbor_pixels_mean = tiles_pixels_mean[tiles_pixels_mean['spot'] == neighbor_name].tile_mean.values[0]
+                if abs(spot_pixels_mean - neighbor_pixels_mean) > max_distance:
+                    neighbor_to_remove = neighbor_and_location
+            spot_expression_with_neighbors.drop(columns=[neighbor_to_remove], inplace=True)
+            expression_column_names = expression_column_names.drop(neighbor_to_remove)
+            spot_expression_with_neighbors['expression_mean'] = spot_expression_with_neighbors[expression_column_names].mean(axis=1)
+
         spot_expression_with_neighbors.drop(columns=spot_expression_with_neighbors.columns[2:-1], inplace = True)
         df_expressions.loc[df_expressions.spot == spot, ['expression']] = spot_expression_with_neighbors['expression_mean'].astype(np.float32)
 
@@ -360,5 +387,5 @@ if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
     # load_edge_detection_data(dataset_name)
     # load_pairs_tiles_data(dataset_name)
-    load_visium_data(dataset_name, 'spots_data', min_cells=177, min_counts=10, smooth_type='mean_wrt_edge', debug_mode=True)
+    load_visium_data(dataset_name, 'random_data', min_cells=177, min_counts=10, smooth_type='mean_wrt_to_neighbors_tiles_means', debug_mode=True)
 
