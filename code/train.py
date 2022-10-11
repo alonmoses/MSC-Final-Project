@@ -30,6 +30,7 @@ class engine:
     model_name: str
     params: dict
     dl_train: DataLoader
+    dl_valid: DataLoader
     dl_test: DataLoader
     verbose: str = field(default=True)
     epochs: int = field(default = 20)
@@ -42,34 +43,33 @@ class engine:
 
     def execute(self) -> tuple([np.array, np.array]):
         train_epochs_losses, train_batch_losses = np.array([]), np.array([])
-        test_epochs_losses, test_batch_losses = np.array([]), np.array([])
+        valid_epochs_losses, valid_batch_losses = np.array([]), np.array([])
 
         for epoch in range(self.epochs): # Iterate over all epochs
-            pbar = tqdm(iter(self.dl_train),
-                        desc=f'Train epoch {epoch}/{self.epochs}',
-                        disable=not self.verbose)
+            pbar = tqdm(iter(self.dl_train), desc=f'Train epoch {epoch}/{self.epochs}', disable=not self.verbose)
+
             for batch in pbar: # Iterate over all batches
                 train_batch_loss = self.train_batch(batch)
                 train_batch_losses = np.append(train_batch_losses, [train_batch_loss])
 
-            for batch in self.dl_test: # Iterate over all batches
-                test_batch_loss = self.eval_batch(batch)
-                test_batch_losses = np.append(test_batch_losses, [test_batch_loss])                
+            for batch in self.dl_valid: # Iterate over all batches
+                valid_batch_loss = self.eval_batch(batch)
+                valid_batch_losses = np.append(valid_batch_losses, [valid_batch_loss])                
 
             train_epoch_loss = np.sqrt(np.nanmean(train_batch_losses))
-            test_epoch_loss = np.sqrt(np.nanmean(test_batch_losses))
+            valid_epoch_loss = np.sqrt(np.nanmean(valid_batch_losses))
 
             print(f'Epoch #{epoch} Train Loss: {train_epoch_loss}')
-            print(f'Epoch #{epoch} Test Loss: {test_epoch_loss}')
+            print(f'Epoch #{epoch} Validation Loss: {valid_epoch_loss}')
 
             train_epochs_losses = np.append(train_epochs_losses, [train_epoch_loss])
-            test_epochs_losses = np.append(test_epochs_losses, [test_epoch_loss])
+            valid_epochs_losses = np.append(valid_epochs_losses, [valid_epoch_loss])
             
-            if (len(test_epochs_losses) >=3 and (test_epochs_losses[-2] - test_epochs_losses[-1]) < 0.01 and (test_epochs_losses[-3] - test_epochs_losses[-2]) < 0.01):
+            if (len(valid_epochs_losses) >=3 and (valid_epochs_losses[-2] - valid_epochs_losses[-1]) < 0.01 and (valid_epochs_losses[-3] - valid_epochs_losses[-2]) < 0.01):
                 print("Early stopping")
                 break
 
-        return train_epochs_losses, test_epochs_losses
+        return train_epochs_losses, valid_epochs_losses
 
     def train_batch(self, batch):
         genes, spots, y = batch
@@ -82,7 +82,7 @@ class engine:
 
         if self.model_name == 'NMF' or self.model_name == 'NNMF' or self.model_name == 'NeuMF':
             y_pred = self.model(genes, spots).to(self.device) # Predict
-            loss = self.criterion(y_pred, y)#torch.mean((y - y_pred) ** 2) # Calculate loss
+            loss = self.criterion(y_pred, y) # Calculate loss
 
         if self.model_name == 'PMF':
             loss = self.model(y, genes, spots) # Calculate loss
@@ -105,7 +105,6 @@ class engine:
 
             if self.model_name == 'NMF' or self.model_name == 'NNMF' or self.model_name == 'NeuMF':
                 y_pred = self.model(genes, spots).to(self.device) # Predict
-                # loss = torch.mean((y - y_pred) ** 2) # Calculate loss
                 loss = self.criterion(y_pred, y)
 
             if self.model_name == 'PMF':
@@ -155,7 +154,14 @@ class engine:
         
         return df_expressions_preds, df_expressions_true, new_data
     
-    def cluster_reconstructed_data(data, plot=True):
+    def cluster_reconstructed_data(data, plot: bool = True):
+
+        st.pp.normalize_total(data)
+        # run PCA for gene expression data
+        st.em.run_pca(data, n_comps=50)
+        # K-means clustering
+        st.tl.clustering.kmeans(data, n_clusters=7, use_data="X_pca", key_added="X_pca_kmeans")
+        
         colors_map_dict = {
             '#1f77b4': 1, # Blue
             '#f87f13': 0, # Orange
@@ -166,19 +172,14 @@ class engine:
             '#f33ca9': 2  # Pink
         }
         clusters_colors = [c[0] for c in sorted(colors_map_dict.items(), key=lambda i: i[1])]
-
-        new_data_clusters = deepcopy(data)
-        st.pp.normalize_total(new_data_clusters)
-        # run PCA for gene expression data
-        st.em.run_pca(new_data_clusters, n_comps=50)
-        # K-means clustering
-        st.tl.clustering.kmeans(new_data_clusters, n_clusters=7, use_data="X_pca", key_added="X_pca_kmeans")
+        data.uns['X_pca_kmeans_colors'] = clusters_colors
+        
         if plot:
             f = plt.figure()
-            new_data_clusters.uns['X_pca_kmeans_colors'] = clusters_colors
-            st.pl.cluster_plot(new_data_clusters, use_label="X_pca_kmeans")
+            st.pl.cluster_plot(data, use_label="X_pca_kmeans", figsize=(12,10), size=25)
             plt.title('Train')
             plt.show()
+
 
 @dataclass
 class EdgeClassifyEngine:
@@ -470,10 +471,9 @@ def train_paris_tiles_for_neighborhood(dataset_name, k_fold=0):
     classifier_execute.execute()
 
 def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', data_type:str = 'random_data', debug_mode:bool = False):
-    dataset, data = load_visium_data(dataset_name, data_type, min_cells=177, min_counts=10, smooth_type='mean_wrt_edge', debug_mode=debug_mode)
+    dataset, data = load_visium_data(dataset_name, data_type, min_cells=177, min_counts=10,  debug_mode=debug_mode)
     dl_train = dataset.dl_train
     dl_test = dataset.dl_test
-
 
     params = {'learning_rate': 0.001,
               'optimizer': "RMSprop",
@@ -489,6 +489,7 @@ def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', 
                          dl_train = dl_train,
                          dl_test = dl_test,
                          device = 'cpu')
+
     nmf_train_losses, nmf_test_losses = nmf_execute.execute()
     df_expressions_preds, df_expressions_true, reconstructed_data = engine.create_reconstructed_data(nmf_model, dataset, data, 'cpu')
     engine.cluster_reconstructed_data(reconstructed_data)
@@ -496,6 +497,6 @@ def train_data_for_imputation(dataset_name:str = 'Visium_Mouse_Olfactory_Bulb', 
 
 if __name__ == '__main__':
     dataset_name = '/FPST/data/Visium_Mouse_Olfactory_Bulb'
-    # train_tiles_for_edges(dataset_name, k_fold=5)
+    train_tiles_for_edges(dataset_name, k_fold=5)
     # train_paris_tiles_for_neighborhood(dataset_name=dataset_name, k_fold=5)
-    train_data_for_imputation(dataset_name=dataset_name, data_type='spots_data', debug_mode=True)
+    # train_data_for_imputation(dataset_name=dataset_name, debug_mode=True)

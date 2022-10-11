@@ -7,7 +7,6 @@ import os
 import random
 
 from dataclasses import dataclass, field
-from typing import Tuple
 
 from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import OrdinalEncoder
@@ -52,10 +51,21 @@ class Data:
     device: str = field(default = 'cpu')
     top_expressed_genes_number: int = 100
 
+    def set_dataloaders(self, x, data, debug_mode:bool = False, smooth_type:str = ''):
+        df_expressions_top_genes = self.prepare_top_genes_data(x, data, smooth_type)
+        # Creating DataLoaders- top N expressed genes
+        self.dl_train_top_genes, self.dl_valid_top_genes, self.dl_test_top_genes = self.prepare_dl(df_expressions_top_genes, split_ratio = 0.1)
+
     def prepare_top_genes_data(self, x, data, smooth_type:str = ''):
         
         x = np.log(x+1)
         
+        # x_flat = x.flatten()
+        # non_zero_indices = torch.nonzero(torch.tensor(x_flat), as_tuple=True)
+        # self.random_non_zero_indices = np.random.randint(low=0, high=non_zero_indices[0].shape[0], size=int(non_zero_indices[0].shape[0]*0.1))
+        # x_flat[non_zero_indices[0][self.random_non_zero_indices]] = 0
+        # x = np.reshape(x_flat, x.shape)
+
         self.spots_num = data.n_obs
         self.genes_num = data.n_vars
         
@@ -65,7 +75,6 @@ class Data:
         df_expressions = df_expressions_matrix.stack().reset_index()
         df_expressions.columns = ['spot', 'gene', 'expression']
         
-
         if smooth_type:
             df_expressions = self.change_expression_based_on_neighbors(df_expressions, data, smooth_type)
 
@@ -172,12 +181,6 @@ class Data:
         df_expressions.loc[df_expressions.spot == spot, ['expression']] = spot_expression_with_neighbors['expression_mean'].astype(np.float32)
 
         return df_expressions
-
-
-    def set_dataloaders(self, x, data, debug_mode:bool = False, smooth_type:str = ''):
-        df_expressions_top_genes = self.prepare_top_genes_data(x, data, smooth_type)
-        # Creating DataLoaders- top N expressed genes
-        self.dl_train_top_genes, self.dl_valid_top_genes, self.dl_test_top_genes = self.prepare_dl(df_expressions_top_genes, split_ratio = 0.1)
 
     def prepare_dl(self, expression_df, split_ratio = 0.1):
         # split data to train, validaion and test sets
@@ -354,20 +357,24 @@ class PairsTilesData:
 
         
 def load_visium_data(dataset_name, data_type:str = 'random_data', min_cells:int = 0, min_counts:int = 0, smooth_type:str = '', debug_mode:bool = False):
-    dataset_path = f'{dataset_name}'
-    st_data = st.Read10X(dataset_path)
+    dataset_path = dataset_name
+    st_data = st.Read10X(dataset_path, count_file='filtered_feature_bc_matrix.h5', load_images=True)
     if min_counts:
         st.pp.filter_genes(st_data, min_counts=min_counts)
     if min_cells:
         st.pp.filter_genes(st_data, min_cells=min_cells)
     X = st_data.X.toarray()
+
     if debug_mode:
         st_data.var.drop(st_data.var.index[100:], inplace=True)
         X = X[:,:100]
+
     if data_type == 'random_data':
         dataset = Data(dataset=dataset_name, num_workers=5)
+
     if data_type == 'spots_data':    
         dataset = SpotsData(num_workers=5)
+
     dataset.set_dataloaders(X, st_data, debug_mode, smooth_type)
     return dataset, st_data
 
