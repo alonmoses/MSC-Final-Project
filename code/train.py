@@ -176,7 +176,7 @@ class engine:
         
         if plot:
             f = plt.figure()
-            st.pl.cluster_plot(data, use_label="X_pca_kmeans", figsize=(12,10), size=25)
+            st.pl.cluster_plot(data, use_label="X_pca_kmeans", figsize=(12,10), size=45)
             plt.title('Train')
             plt.show()
 
