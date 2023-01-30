@@ -15,7 +15,7 @@ In this project we used DL techniques to impute the missing values. We embed the
 In addition to the basic NMF, we use spatial information around each spot in order to "smooth" the imputed predictions. The spatial information of the neighbors of each spot is retrived from the original matrix. Also, in order to use the most relevant data from the neighbors we used the information found in the image itself.
 ### trials
 - In one trial, we tried to smooth each spot's data using only the spots located in the same region of it using the image. This method should be more explored in future work.
-- In other, more succesful trial, we filtered the irrelevant data using different tile sizes around each spot, and used the RGB values in each one of the tiles and compared them.
+- In other, more succesful trial, we filtered the irrelevant data using different tile sizes around each spot, and used the RGB values in each one of the tiles to compared them. Only spots with tiles with RGB values close to the center spot were used during the smoothing procedure.
 
 ## Results
 Comparison between each one of the techniques implemented in the project is presented in the below graph.
